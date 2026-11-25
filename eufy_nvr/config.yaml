@@ -30,11 +30,13 @@ webui: "http://[HOST]:[PORT:1985]/"
 ports:
   8556/tcp: 8556
   1985/tcp: 1985
+  1986/tcp: 1986
   8557/tcp: 8557
   8557/udp: 8557
 ports_description:
   8556/tcp: RTSP (HA pulls cameras from rtsp://<HA-LAN-IP>:8556/eufy_<name>)
   1985/tcp: go2rtc API / web UI (also the watchdog endpoint)
+  1986/tcp: Camera control API (pan/tilt, zoom; go2rtc login; only with camera_controls)
   8557/tcp: WebRTC (TCP candidate)
   8557/udp: WebRTC (UDP candidate)
 
@@ -69,6 +71,7 @@ options:
   adaptive_warm_seconds: 30
   session_reuse_seconds: 0
   audio: false
+  camera_controls: false
   token_refresh_hours: 6
   video_copy: false
   extra_lenses: ""
@@ -99,6 +102,8 @@ schema:
   session_reuse_seconds: int(0,300)?
   # audio: carry each camera's microphone (Opus) on single-camera streams. Experimental.
   audio: bool?
+  # camera_controls: pan/tilt and zoom API on port 1986 (go2rtc login) for the live camera.
+  camera_controls: bool?
   # token_refresh_hours: how often to re-login and refresh auth.json (the eufy token is ~1-day).
   token_refresh_hours: int(0,)?
   # video_copy: publish raw H.265 instead of transcoding to H.264 (lower CPU, but the browser live

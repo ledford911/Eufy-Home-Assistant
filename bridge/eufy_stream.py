@@ -18,6 +18,8 @@ import eufy_cloud as ec
 import stream_sensors
 import keyframe_gate
 from audio_feed import AudioFeed
+import camera_control
+from urllib.parse import urlsplit
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration
 from aiortc.sdp import candidate_from_sdp
 import logging
@@ -258,6 +260,15 @@ STREAM_SENSORS = stream_sensor_map(CHANNELS, SENSOR)
 # does, instead of a new signaling/ICE/DTLS handshake.
 REUSE_SECONDS = max(0, min(int(os.environ.get("EUFY_SESSION_REUSE_SECONDS", "0") or 0), 300))
 SESSION_SOCKET = os.environ.get("EUFY_SESSION_SOCKET", "/tmp/eufy_nvr_session.sock")
+# Camera controls (pan/tilt, zoom) for the live camera; set by the add-on's camera_controls.
+CONTROL_SOCKET = os.environ.get("EUFY_CONTROL_SOCKET", "")
+
+
+def stream_name(rtsp_url):
+    """go2rtc stream name from the publish URL (rtsp://.../eufy_garage -> eufy_garage)."""
+    if not rtsp_url:
+        return ""
+    return urlsplit(rtsp_url).path.rsplit("/", 1)[-1]
 REUSE_FIRST_VIDEO_TIMEOUT = 10.0
 REUSE_STALL_TIMEOUT = 20.0
 STDOUT_MODE = os.environ.get("EUFY_STDOUT") == "1"   # write clean Annex-B to stdout (for go2rtc/ffmpeg exec source)
@@ -864,6 +875,50 @@ async def main():
         reuse = {"parked": False, "client": None, "idle": None, "server": None,
                  "detached": False, "lock": asyncio.Lock()}
 
+        # ---- camera controls (EUFY_CONTROL_SOCKET) -----------------------------------
+        def control_refusal(stream):
+            if reuse["parked"] or not video_ready.is_set():
+                return "camera not live"
+            if stream != stream_name(RTSP_URL):
+                return "that camera is not the live one"
+            if GROUP or len(CHANNELS) != 1:
+                return "multi-camera views have no controls"
+            if STREAM_SENSORS.get(CHANNELS[0], stream_sensors.DEFAULT_SENSOR) == 0:
+                return "the fixed lens has no pan/tilt or zoom"
+            return None
+
+        async def handle_control(reader, writer):
+            reply = {"ok": False}
+            try:
+                line = await asyncio.wait_for(reader.readline(), timeout=5)
+                stream, action, args = camera_control.parse_request(json.loads(line))
+                refusal = control_refusal(stream)
+                if refusal:
+                    reply["error"] = refusal
+                else:
+                    oracle.push_send(1, camera_control.build(USER_ID, CHANNELS[0], action, args))
+                    reply = {"ok": True, "channel": CHANNELS[0], "action": action, **args}
+                    log(f"CONTROL {action} {args} ch={CHANNELS[0]}")
+            except camera_control.ControlError as exc:
+                reply["error"] = str(exc)
+            except (ValueError, asyncio.TimeoutError):
+                reply["error"] = "bad request"
+            try:
+                writer.write((json.dumps(reply) + "\n").encode())
+                await writer.drain()
+            except OSError:
+                pass
+            finally:
+                writer.close()
+
+        control_server = None
+        if CONTROL_SOCKET and not DISCOVER:
+            try:
+                os.unlink(CONTROL_SOCKET)
+            except FileNotFoundError:
+                pass
+            control_server = await asyncio.start_unix_server(handle_control, path=CONTROL_SOCKET)
+
         def detach_from_supervisor():
             """Keep logging after the supervisor that started this engine exits.
 
@@ -1150,6 +1205,11 @@ async def main():
     if REUSE_SECONDS:
         try:
             os.unlink(SESSION_SOCKET)
+        except OSError:
+            pass
+    if CONTROL_SOCKET and not DISCOVER:
+        try:
+            os.unlink(CONTROL_SOCKET)
         except OSError:
             pass
     log(f"DONE. video frames={state['vframes']} bytes={state['vbytes']} ptcs_in={state['ptcs_in']} "

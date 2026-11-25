@@ -38,6 +38,8 @@ export EUFY_STREAM_SENSORS="$(bashio::config 'stream_sensors' '')"
 export EUFY_SESSION_REUSE_SECONDS="$(bashio::config 'session_reuse_seconds' '0')"
 # Camera audio (experimental): each single-camera stream carries that camera's microphone
 # as Opus. Multi-camera groups stay silent.
+export EUFY_CONTROL_PORT="1986"
+if bashio::config.true 'camera_controls'; then export EUFY_CONTROL_SOCKET="/tmp/eufy_nvr_control.sock"; else unset EUFY_CONTROL_SOCKET; fi
 if bashio::config.true 'audio'; then export EUFY_AUDIO_CHN="auto"; else export EUFY_AUDIO_CHN="-1"; fi
 export EUFY_ICE_ALLOW="$(bashio::config 'ice_allow' '')"
 export EUFY_SESSION_LOCK="${STATE_DIR}/eufy-session.lock"
@@ -185,6 +187,14 @@ start_adaptive_warmer() {
     bashio::log.info "adaptive warm lease enabled (${seconds}s, one camera maximum)."
 }
 
+start_control_api() {
+    # Camera controls (pan/tilt, zoom) for the camera that is live, behind the go2rtc login.
+    if bashio::config.true 'camera_controls'; then
+        bashio::log.info "Camera control API on :${EUFY_CONTROL_PORT} (go2rtc login required)."
+        ( while true; do python3 control_api.py; sleep 5; done ) &
+    fi
+}
+
 start_relogin_timer() {
     local hours; hours="$(bashio::config 'token_refresh_hours' '6')"
     if ! [ "${hours}" -gt 0 ] 2>/dev/null; then
@@ -225,6 +235,7 @@ while true; do
     if [ "${BACKGROUND_TASKS_STARTED}" -eq 0 ]; then
         start_relogin_timer
         start_adaptive_warmer
+        start_control_api
         BACKGROUND_TASKS_STARTED=1
     fi
 
