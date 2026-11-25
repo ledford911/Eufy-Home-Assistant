@@ -98,7 +98,9 @@ def test_api_forwards_to_the_engine_and_needs_the_login(tmp_path):
 
     async def run():
         server = await asyncio.start_unix_server(engine, path=sock)
-        client = TestClient(TestServer(api.make_app("u", "p" * 16, sock)))
+        cfg = tmp_path / "go2rtc.yaml"
+        cfg.write_text('streams:\n  eufy_a: "exec:python eufy_run.py 3 --rtsp {output}#x"\n')
+        client = TestClient(TestServer(api.make_app("u", "p" * 16, sock, str(cfg))))
         await client.start_server()
         try:
             body = {"stream": "eufy_a", "action": "zoom", "level": 2}
@@ -112,7 +114,7 @@ def test_api_forwards_to_the_engine_and_needs_the_login(tmp_path):
         finally:
             await client.close()
             server.close()
-        assert seen == [{"stream": "eufy_a", "action": "zoom", "level": 2}]
+        assert seen == [{"stream": "eufy_a", "action": "zoom", "level": 2, "channel": 3, "sensor": None}]
 
     asyncio.run(run())
 
@@ -131,3 +133,20 @@ def test_engine_and_addon_wiring():
     assert "control_api.py" in run and "camera_controls" in run
     config = (ROOT / "eufy_nvr/config.yaml").read_text()
     assert "camera_controls: bool?" in config and "1986/tcp" in config
+
+
+def test_stream_names_resolve_from_the_generated_config():
+    spec = importlib.util.spec_from_file_location("gen_for_control", ROOT / "bridge/gen_go2rtc.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    named = [("eufy_frontyard_east", {"channel": 0, "status": 1}),
+             ("eufy_garage", {"channel": 6, "status": 1})]
+    text = gen.render_config(named, "user", "p" * 16, 1985, 8556, 8557,
+                             extra_lenses={0: [0]}, camera_groups=[("front", [(0, 0, 1), (1, 6, 1)])])
+    assert camera_control.resolve_stream("eufy_frontyard_east", text) == (0, None)
+    assert camera_control.resolve_stream("eufy_frontyard_east_lens0", text) == (0, 0)
+    assert camera_control.resolve_stream("eufy_garage", text) == (6, None)
+    with pytest.raises(camera_control.ControlError, match="multi-camera"):
+        camera_control.resolve_stream("eufy_group_front", text)
+    with pytest.raises(camera_control.ControlError, match="unknown"):
+        camera_control.resolve_stream("eufy_nope", text)

@@ -19,7 +19,6 @@ import stream_sensors
 import keyframe_gate
 from audio_feed import AudioFeed
 import camera_control
-from urllib.parse import urlsplit
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration
 from aiortc.sdp import candidate_from_sdp
 import logging
@@ -263,12 +262,6 @@ SESSION_SOCKET = os.environ.get("EUFY_SESSION_SOCKET", "/tmp/eufy_nvr_session.so
 # Camera controls (pan/tilt, zoom) for the live camera; set by the add-on's camera_controls.
 CONTROL_SOCKET = os.environ.get("EUFY_CONTROL_SOCKET", "")
 
-
-def stream_name(rtsp_url):
-    """go2rtc stream name from the publish URL (rtsp://.../eufy_garage -> eufy_garage)."""
-    if not rtsp_url:
-        return ""
-    return urlsplit(rtsp_url).path.rsplit("/", 1)[-1]
 REUSE_FIRST_VIDEO_TIMEOUT = 10.0
 REUSE_STALL_TIMEOUT = 20.0
 STDOUT_MODE = os.environ.get("EUFY_STDOUT") == "1"   # write clean Annex-B to stdout (for go2rtc/ffmpeg exec source)
@@ -876,14 +869,15 @@ async def main():
                  "detached": False, "lock": asyncio.Lock()}
 
         # ---- camera controls (EUFY_CONTROL_SOCKET) -----------------------------------
-        def control_refusal(stream):
+        def control_refusal(channel, sensor):
             if reuse["parked"] or not video_ready.is_set():
                 return "camera not live"
-            if stream != stream_name(RTSP_URL):
+            if GROUP or len(CHANNELS) != 1 or CHANNELS[0] != channel:
                 return "that camera is not the live one"
-            if GROUP or len(CHANNELS) != 1:
-                return "multi-camera views have no controls"
-            if STREAM_SENSORS.get(CHANNELS[0], stream_sensors.DEFAULT_SENSOR) == 0:
+            live_sensor = STREAM_SENSORS.get(channel, stream_sensors.DEFAULT_SENSOR)
+            if sensor is not None and sensor != live_sensor:
+                return "that camera is not the live one"
+            if live_sensor == 0:
                 return "the fixed lens has no pan/tilt or zoom"
             return None
 
@@ -891,8 +885,12 @@ async def main():
             reply = {"ok": False}
             try:
                 line = await asyncio.wait_for(reader.readline(), timeout=5)
-                stream, action, args = camera_control.parse_request(json.loads(line))
-                refusal = control_refusal(stream)
+                obj = json.loads(line)
+                _stream, action, args = camera_control.parse_request(obj)
+                channel, sensor = obj.get("channel"), obj.get("sensor")
+                if not isinstance(channel, int) or not (sensor is None or isinstance(sensor, int)):
+                    raise camera_control.ControlError("channel is required")
+                refusal = control_refusal(channel, sensor)
                 if refusal:
                     reply["error"] = refusal
                 else:

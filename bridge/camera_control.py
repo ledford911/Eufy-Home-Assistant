@@ -8,6 +8,7 @@ Zoom: command_id 1350, cmd 6203, payload {"dstZoom": <level>} on the camera's ch
 The web viewer allows zoom levels 1-8 on the S4 Max (T8E00).
 """
 import json
+import re
 import struct
 
 PTZ_COMMAND_ID = 1700
@@ -76,3 +77,26 @@ def build(user_id, channel, action, args):
     if action == "ptz":
         return build_ptz(user_id, channel, args["move"], args["direction"])
     return build_zoom(user_id, channel, args["level"])
+
+
+_STREAM_LINE = re.compile(r'^  ([A-Za-z0-9_]+): "exec:python eufy_run\.py (\S+)(?: --sensor (\d+))? --rtsp')
+
+
+def resolve_stream(name, go2rtc_yaml):
+    """(channel, sensor) for a generated stream name; sensor is None for the main stream.
+
+    go2rtc publishes to a random path, so the engine cannot know its own stream name;
+    the generated config maps each name to its eufy_run.py arguments.
+    """
+    for line in go2rtc_yaml.splitlines():
+        m = _STREAM_LINE.match(line)
+        if not m or m.group(1) != name:
+            continue
+        if m.group(2).startswith("g:"):
+            raise ControlError("multi-camera views have no controls")
+        try:
+            channel = int(m.group(2))
+        except ValueError:
+            break
+        return channel, (int(m.group(3)) if m.group(3) else None)
+    raise ControlError(f"unknown stream {name}")

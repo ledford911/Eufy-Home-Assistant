@@ -39,6 +39,7 @@ export EUFY_SESSION_REUSE_SECONDS="$(bashio::config 'session_reuse_seconds' '0')
 # Camera audio (experimental): each single-camera stream carries that camera's microphone
 # as Opus. Multi-camera groups stay silent.
 export EUFY_CONTROL_PORT="1986"
+export EUFY_GO2RTC_CONFIG="${CONFIG_PATH}"
 if bashio::config.true 'camera_controls'; then export EUFY_CONTROL_SOCKET="/tmp/eufy_nvr_control.sock"; else unset EUFY_CONTROL_SOCKET; fi
 if bashio::config.true 'audio'; then export EUFY_AUDIO_CHN="auto"; else export EUFY_AUDIO_CHN="-1"; fi
 export EUFY_ICE_ALLOW="$(bashio::config 'ice_allow' '')"

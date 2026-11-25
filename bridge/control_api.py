@@ -14,9 +14,10 @@ import sys
 
 from aiohttp import web
 
-from camera_control import ControlError, parse_request
+from camera_control import ControlError, parse_request, resolve_stream
 
 SOCKET = os.environ.get("EUFY_CONTROL_SOCKET", "/tmp/eufy_nvr_control.sock")
+GO2RTC_CONFIG = os.environ.get("EUFY_GO2RTC_CONFIG", "/data/go2rtc.yaml")
 TIMEOUT = 5.0
 
 
@@ -47,14 +48,19 @@ async def forward(obj, path=SOCKET, timeout=TIMEOUT):
     return (200 if reply.get("ok") else 409), reply
 
 
-def make_app(username, password, socket_path=SOCKET):
+def make_app(username, password, socket_path=SOCKET, config_path=GO2RTC_CONFIG):
     async def control(request):
         if not authorized(request.headers.get("Authorization"), username, password):
             return web.json_response({"ok": False, "error": "unauthorized"}, status=401,
                                      headers={"WWW-Authenticate": 'Basic realm="eufy"'})
         try:
             obj = await request.json()
-            parse_request(obj)
+            stream, _action, _args = parse_request(obj)
+            with open(config_path, encoding="utf-8") as fh:
+                channel, sensor = resolve_stream(stream, fh.read())
+            obj = {**obj, "channel": channel, "sensor": sensor}
+        except OSError:
+            return web.json_response({"ok": False, "error": "stream list unavailable"}, status=503)
         except ControlError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
         except ValueError:
