@@ -1,6 +1,6 @@
 """Small HTTP API for camera controls (pan/tilt, zoom), protected by the go2rtc login.
 
-POST /api/control  {"stream": "eufy_frontyard_east", "action": "ptz", "move": "tap",
+POST /api/control  {"stream": "eufy_front_gate", "action": "ptz", "move": "tap",
                     "direction": "left"}   or   {"stream": ..., "action": "zoom", "level": 4}
 The request goes to the running stream engine over a unix socket; it only works while
 that camera is live (the NVR accepts controls inside the open live session).

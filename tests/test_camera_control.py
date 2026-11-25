@@ -139,14 +139,26 @@ def test_stream_names_resolve_from_the_generated_config():
     spec = importlib.util.spec_from_file_location("gen_for_control", ROOT / "bridge/gen_go2rtc.py")
     gen = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gen)
-    named = [("eufy_frontyard_east", {"channel": 0, "status": 1}),
-             ("eufy_garage", {"channel": 6, "status": 1})]
+    named = [("eufy_front_gate", {"channel": 0, "status": 1}),
+             ("eufy_porch", {"channel": 6, "status": 1})]
     text = gen.render_config(named, "user", "p" * 16, 1985, 8556, 8557,
                              extra_lenses={0: [0]}, camera_groups=[("front", [(0, 0, 1), (1, 6, 1)])])
-    assert camera_control.resolve_stream("eufy_frontyard_east", text) == (0, None)
-    assert camera_control.resolve_stream("eufy_frontyard_east_lens0", text) == (0, 0)
-    assert camera_control.resolve_stream("eufy_garage", text) == (6, None)
+    assert camera_control.resolve_stream("eufy_front_gate", text) == (0, None)
+    assert camera_control.resolve_stream("eufy_front_gate_lens0", text) == (0, 0)
+    assert camera_control.resolve_stream("eufy_porch", text) == (6, None)
     with pytest.raises(camera_control.ControlError, match="multi-camera"):
         camera_control.resolve_stream("eufy_group_front", text)
     with pytest.raises(camera_control.ControlError, match="unknown"):
         camera_control.resolve_stream("eufy_nope", text)
+
+
+def test_ha_buttons_only_for_ptz_cameras_and_zoom_steps():
+    pytest.importorskip("homeassistant")
+    sys.path.insert(0, str(ROOT))
+    from custom_components.eufy_nvr import button
+    streams = ["eufy_front_gate", "eufy_front_gate_lens0", "eufy_porch", "eufy_group_all"]
+    assert button.ptz_streams(streams) == ["eufy_front_gate"]
+    assert [button.next_zoom(z, "in") for z in (1, 2, 4, 8)] == [2, 4, 8, 8]
+    assert [button.next_zoom(z, "out") for z in (8, 4, 2, 1)] == [4, 2, 1, 1]
+    assert button.next_zoom(8, "reset") == 1
+    assert len({b.key for b in button.BUTTONS}) == 7

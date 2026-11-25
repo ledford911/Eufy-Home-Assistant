@@ -8,7 +8,7 @@ SPEC = importlib.util.spec_from_file_location("audio_feed", ROOT / "bridge/audio
 audio_feed = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(audio_feed)
 
-# A real frame header from a T8N00 (AAC-LC, 16 kHz, mono, 193 bytes).
+# An ADTS header in the NVR format (AAC-LC, 16 kHz, mono, 193 bytes).
 REAL = bytes.fromhex("fff160401821c4") + bytes(186)
 
 
