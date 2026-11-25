@@ -127,7 +127,7 @@ def test_api_without_a_live_engine(tmp_path):
 
 def test_engine_and_addon_wiring():
     stream = (ROOT / "bridge/eufy_stream.py").read_text()
-    assert "camera_control.build(USER_ID, CHANNELS[0], action, args)" in stream
+    assert "camera_control.build(USER_ID, channel, action, args)" in stream
     assert "the fixed lens has no pan/tilt or zoom" in stream
     run = (ROOT / "eufy_nvr/run.sh").read_text()
     assert "control_api.py" in run and "camera_controls" in run
@@ -161,4 +161,18 @@ def test_ha_buttons_only_for_ptz_cameras_and_zoom_steps():
     assert [button.next_zoom(z, "in") for z in (1, 2, 4, 8)] == [2, 4, 8, 8]
     assert [button.next_zoom(z, "out") for z in (8, 4, 2, 1)] == [4, 2, 1, 1]
     assert button.next_zoom(8, "reset") == 1
-    assert len({b.key for b in button.BUTTONS}) == 7
+    assert len({b.key for b in button.BUTTONS}) == 11
+
+
+def test_sweep_holds_then_releases():
+    stream, action, args = camera_control.parse_request(
+        {"stream": "eufy_a", "action": "ptz", "move": "sweep", "direction": "up", "seconds": 2})
+    steps = camera_control.build("U", 1, action, args)
+    assert [d for d, _f in steps] == [0.0, 2.0]
+    assert [decode(f)[3]["data"]["cmd_type"] for _d, f in steps] == [4, 3]
+    assert camera_control.parse_request({"stream": "s", "action": "ptz", "move": "sweep",
+                                         "direction": "left"})[2]["seconds"] == 1.5
+    for bad in (0.1, 6, True, "2"):
+        with pytest.raises(camera_control.ControlError):
+            camera_control.parse_request({"stream": "s", "action": "ptz", "move": "sweep",
+                                          "direction": "left", "seconds": bad})

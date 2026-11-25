@@ -17,6 +17,7 @@ ZOOM_CMD = 6203
 DIRECTIONS = {"left": 1, "right": 2, "up": 3, "down": 4}
 MOVES = {"tap": 1, "hold": 4, "release": 3}
 ZOOM_MIN, ZOOM_MAX = 1, 8
+SWEEP_DEFAULT, SWEEP_MAX = 1.5, 5.0   # "sweep": hold, wait, release (seconds)
 
 
 class ControlError(ValueError):
@@ -57,11 +58,16 @@ def parse_request(obj):
     if action == "ptz":
         move = obj.get("move", "tap")
         direction = obj.get("direction")
-        if move not in MOVES:
-            raise ControlError(f"move must be one of {sorted(MOVES)}")
+        if move not in MOVES and move != "sweep":
+            raise ControlError(f"move must be one of {sorted([*MOVES, 'sweep'])}")
         if direction not in DIRECTIONS:
             raise ControlError(f"direction must be one of {sorted(DIRECTIONS)}")
-        return stream, "ptz", {"move": move, "direction": direction}
+        if move != "sweep":
+            return stream, "ptz", {"move": move, "direction": direction}
+        seconds = obj.get("seconds", SWEEP_DEFAULT)
+        if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or not 0.2 <= seconds <= SWEEP_MAX:
+            raise ControlError(f"seconds must be 0.2-{SWEEP_MAX}")
+        return stream, "ptz", {"move": "sweep", "direction": direction, "seconds": float(seconds)}
     if action == "zoom":
         level = obj.get("level")
         if isinstance(level, bool) or not isinstance(level, (int, float)):
@@ -74,9 +80,13 @@ def parse_request(obj):
 
 
 def build(user_id, channel, action, args):
-    if action == "ptz":
-        return build_ptz(user_id, channel, args["move"], args["direction"])
-    return build_zoom(user_id, channel, args["level"])
+    """Frames to send, as (delay_before_seconds, frame) steps."""
+    if action == "zoom":
+        return [(0.0, build_zoom(user_id, channel, args["level"]))]
+    if args["move"] == "sweep":
+        return [(0.0, build_ptz(user_id, channel, "hold", args["direction"])),
+                (args["seconds"], build_ptz(user_id, channel, "release", args["direction"]))]
+    return [(0.0, build_ptz(user_id, channel, args["move"], args["direction"]))]
 
 
 _STREAM_LINE = re.compile(r'^  ([A-Za-z0-9_]+): "exec:python eufy_run\.py (\S+)(?: --sensor (\d+))? --rtsp')

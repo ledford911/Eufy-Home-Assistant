@@ -18,7 +18,7 @@ from camera_control import ControlError, parse_request, resolve_stream
 
 SOCKET = os.environ.get("EUFY_CONTROL_SOCKET", "/tmp/eufy_nvr_control.sock")
 GO2RTC_CONFIG = os.environ.get("EUFY_GO2RTC_CONFIG", "/data/go2rtc.yaml")
-TIMEOUT = 5.0
+TIMEOUT = 8.0   # a sweep holds the reply for up to 5 s
 
 
 def authorized(header, username, password):

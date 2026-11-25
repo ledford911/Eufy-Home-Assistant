@@ -894,7 +894,10 @@ async def main():
                 if refusal:
                     reply["error"] = refusal
                 else:
-                    oracle.push_send(1, camera_control.build(USER_ID, CHANNELS[0], action, args))
+                    for delay, frame in camera_control.build(USER_ID, channel, action, args):
+                        if delay:
+                            await asyncio.sleep(delay)
+                        oracle.push_send(1, frame)
                     reply = {"ok": True, "channel": CHANNELS[0], "action": action, **args}
                     log(f"CONTROL {action} {args} ch={CHANNELS[0]}")
             except camera_control.ControlError as exc:

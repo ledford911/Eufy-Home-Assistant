@@ -48,6 +48,10 @@ BUTTONS = (
     ControlButton("pan_right", "Pan right", "mdi:arrow-right-bold", {"action": "ptz", "direction": "right"}),
     ControlButton("tilt_up", "Tilt up", "mdi:arrow-up-bold", {"action": "ptz", "direction": "up"}),
     ControlButton("tilt_down", "Tilt down", "mdi:arrow-down-bold", {"action": "ptz", "direction": "down"}),
+    ControlButton("pan_left_far", "Pan left far", "mdi:chevron-double-left", {"action": "ptz", "move": "sweep", "direction": "left"}),
+    ControlButton("pan_right_far", "Pan right far", "mdi:chevron-double-right", {"action": "ptz", "move": "sweep", "direction": "right"}),
+    ControlButton("tilt_up_far", "Tilt up far", "mdi:chevron-double-up", {"action": "ptz", "move": "sweep", "direction": "up"}),
+    ControlButton("tilt_down_far", "Tilt down far", "mdi:chevron-double-down", {"action": "ptz", "move": "sweep", "direction": "down"}),
     ControlButton("zoom_in", "Zoom in", "mdi:magnify-plus", zoom="in"),
     ControlButton("zoom_out", "Zoom out", "mdi:magnify-minus", zoom="out"),
     ControlButton("zoom_reset", "Zoom 1x", "mdi:magnify-close", zoom="reset"),
@@ -89,7 +93,7 @@ class ControlClient:
         body = {"stream": stream, **request}
         try:
             async with self._session.post(self._url, json=body, auth=self._auth,
-                                          timeout=ClientTimeout(total=8)) as resp:
+                                          timeout=ClientTimeout(total=12)) as resp:
                 reply = await resp.json(content_type=None)
         except (ClientError, TimeoutError, ValueError) as err:
             raise HomeAssistantError(
