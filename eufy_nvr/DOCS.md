@@ -46,10 +46,9 @@ cloud; the video itself is pulled LAN-direct from the NVR.
    - *(optional)* `preempt_after_seconds` -> newest camera wins. The NVR serves one live camera at a
      time; by default a second camera waits until the first one closes. With this set (for example
      `5`), a camera that has waited that long asks the current one to step aside, which helps when a
-     viewer leaves a stream open (a TV, a forgotten tab). The camera that stepped aside does not
-     come back on its own: automatic reconnects from its viewer are refused at once, and it opens
-     again only after nothing has retried it for 3 minutes. Leave it at `0` (default) if something
-     records a camera 24/7.
+     viewer leaves a stream open (a TV, a forgotten tab). A camera that stepped aside cannot take
+     the session back for 10 minutes, so two viewers cannot bounce the NVR back and forth. Leave it at
+     `0` (default) if something records a camera 24/7.
    - *(optional)* `disabled_channels` -> comma-separated channel numbers such as `0,2` to omit
      cameras that cannot stream from go2rtc and snapshot priming. Discovery still records them.
    - *(optional)* `stream_sensors` -> comma-separated `channel:sensor` pairs such as `0:0,2:0` that set the
