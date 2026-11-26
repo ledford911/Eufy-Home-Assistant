@@ -44,8 +44,8 @@ def test_takeover_requests_expire_and_ignore_our_own_camera(monkeypatch, tmp_pat
 def test_a_stepped_aside_camera_cools_down(monkeypatch, tmp_path):
     run = load_run(monkeypatch, tmp_path)
     run.mark_preempted("1", now=1000.0)
-    assert run.recently_preempted("1", now=1000.0 + 60)
-    assert not run.recently_preempted("2", now=1000.0 + 60)
+    assert run.recently_preempted("1", now=1000.0 + 20)
+    assert not run.recently_preempted("2", now=1000.0 + 20)
     assert not run.recently_preempted("1", now=1000.0 + run.PREEMPT_COOLDOWN + 1)
 
 
@@ -144,3 +144,10 @@ def test_addon_option_and_wiring():
     supervisor = (ROOT / "bridge/eufy_run.py").read_text()
     assert "watch_takeover(key, stop_event)" in supervisor
     assert "takeover_key=key" in supervisor
+
+
+def test_cooldown_lets_you_switch_back_soon(monkeypatch, tmp_path):
+    run = load_run(monkeypatch, tmp_path)
+    assert run.PREEMPT_COOLDOWN == 30.0
+    run.mark_preempted("1", now=1000.0)
+    assert not run.recently_preempted("1", now=1031.0)

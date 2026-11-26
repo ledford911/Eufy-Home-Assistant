@@ -47,7 +47,7 @@ cloud; the video itself is pulled LAN-direct from the NVR.
      time; by default a second camera waits until the first one closes. With this set (for example
      `5`), a camera that has waited that long asks the current one to step aside, which helps when a
      viewer leaves a stream open (a TV, a forgotten tab). A camera that stepped aside cannot take
-     the session back for 10 minutes, so two viewers cannot bounce the NVR back and forth. Leave it at
+     the session back for 30 seconds, so two viewers cannot bounce the NVR back and forth. Leave it at
      `0` (default) if something records a camera 24/7.
    - *(optional)* `disabled_channels` -> comma-separated channel numbers such as `0,2` to omit
      cameras that cannot stream from go2rtc and snapshot priming. Discovery still records them.

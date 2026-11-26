@@ -61,7 +61,7 @@ HANDOFF_POLL = 0.5
 # stepped aside cannot take the session back for PREEMPT_COOLDOWN seconds, so two
 # viewers (or a source that keeps reconnecting) cannot ping-pong the NVR.
 PREEMPT_SECONDS = max(0, min(int(os.environ.get("EUFY_PREEMPT_AFTER_SECONDS", "0") or 0), 120))
-PREEMPT_COOLDOWN = 600.0
+PREEMPT_COOLDOWN = 30.0
 PREEMPT_FRESH = 3.0
 TAKEOVER_PATH = SESSION_LOCK_PATH.with_name("eufy-takeover.json")
 PREEMPTED_PATH = SESSION_LOCK_PATH.with_name("eufy-preempted.json")
