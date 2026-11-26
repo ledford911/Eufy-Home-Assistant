@@ -56,6 +56,15 @@ BUSY_RETRY_DELAY = max(0.5, min(float(os.environ.get("EUFY_BUSY_RETRY_DELAY", "4
 REUSE_SECONDS = max(0, min(int(os.environ.get("EUFY_SESSION_REUSE_SECONDS", "0") or 0), 300))
 SESSION_SOCKET = os.environ.get("EUFY_SESSION_SOCKET", "/tmp/eufy_nvr_session.sock")
 HANDOFF_POLL = 0.5
+# Newest camera wins (off by default): a request that has waited this many seconds
+# for the NVR session asks the current camera to step aside. A camera that was just
+# stepped aside cannot take the session back for PREEMPT_COOLDOWN seconds, so two
+# viewers (or a source that keeps reconnecting) cannot ping-pong the NVR.
+PREEMPT_SECONDS = max(0, min(int(os.environ.get("EUFY_PREEMPT_AFTER_SECONDS", "0") or 0), 120))
+PREEMPT_COOLDOWN = 600.0
+PREEMPT_FRESH = 3.0
+TAKEOVER_PATH = SESSION_LOCK_PATH.with_name("eufy-takeover.json")
+PREEMPTED_PATH = SESSION_LOCK_PATH.with_name("eufy-preempted.json")
 HANDOFF_REPLY_TIMEOUT = 12.0
 PARK_TIMEOUT = 4.0
 
@@ -117,6 +126,79 @@ def _process_start(pid: int) -> str:
         return "0"
 
 
+def stream_key(args: list[str]) -> str:
+    """Camera identity of a request: the selection and lens, not the per-run RTSP URL."""
+    key = args[0] if args and not args[0].startswith("-") else ""
+    if "--sensor" in args:
+        i = args.index("--sensor")
+        if i + 1 < len(args):
+            key += f" sensor {args[i + 1]}"
+    return key
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_json(path: Path, data: dict) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + f".{os.getpid()}")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def recently_preempted(key: str, now: float | None = None) -> bool:
+    at = _read_json(PREEMPTED_PATH).get(key)
+    now = time.time() if now is None else now
+    return isinstance(at, (int, float)) and now - at < PREEMPT_COOLDOWN
+
+
+def mark_preempted(key: str, now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    data = {k: v for k, v in _read_json(PREEMPTED_PATH).items()
+            if isinstance(v, (int, float)) and now - v < PREEMPT_COOLDOWN}
+    data[key] = now
+    _write_json(PREEMPTED_PATH, data)
+
+
+def request_takeover(key: str, now: float | None = None) -> None:
+    _write_json(TAKEOVER_PATH, {"key": key, "at": time.time() if now is None else now})
+
+
+def takeover_request(own_key: str, now: float | None = None) -> str | None:
+    """The key of a fresh takeover request from a different camera, if any."""
+    data = _read_json(TAKEOVER_PATH)
+    key, at = data.get("key"), data.get("at")
+    now = time.time() if now is None else now
+    if isinstance(key, str) and key != own_key and isinstance(at, (int, float)) \
+            and 0 <= now - at < PREEMPT_FRESH:
+        return key
+    return None
+
+
+async def watch_takeover(own_key: str, stop_event: asyncio.Event) -> None:
+    """While we hold the session, step aside when a newer camera asks for it."""
+    while not stop_event.is_set():
+        other = takeover_request(own_key)
+        if other is not None:
+            mark_preempted(own_key)
+            print(f"eufy supervisor: stepping aside for a newer request ({other})",
+                  file=sys.stderr, flush=True)
+            stop_event.set()
+            return
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=0.5)
+        except asyncio.TimeoutError:
+            pass
+
+
 class SessionGate:
     """Cross-process exclusive gate for the NVR's single live session.
 
@@ -163,7 +245,7 @@ class SessionGate:
             tickets.append(ticket)
         return tickets
 
-    async def acquire(self, stop_event: asyncio.Event, alternative=None):
+    async def acquire(self, stop_event: asyncio.Event, alternative=None, takeover_key=None):
         """Wait for the session lock (returns True) or until stopped (False).
 
         ``alternative`` is polled while waiting; a truthy result (for example a
@@ -191,12 +273,19 @@ class SessionGate:
             ticket.write_text(self.label)
             last_alternative_at = 0.0
             while not stop_event.is_set():
-                if alternative is not None and time.monotonic() - last_alternative_at >= HANDOFF_POLL:
+                queue = self._queue()
+                # A camera that was just stepped aside waits its turn instead of
+                # grabbing the parked session ahead of the newer request.
+                yield_turn = (PREEMPT_SECONDS and takeover_key is not None
+                              and queue and queue[0] != ticket
+                              and recently_preempted(takeover_key))
+                if (alternative is not None and not yield_turn
+                        and time.monotonic() - last_alternative_at >= HANDOFF_POLL):
                     last_alternative_at = time.monotonic()
                     result = await alternative()
                     if result:
                         return result
-                queue = self._queue()
+                    queue = self._queue()
                 if not queue or queue[0] == ticket:
                     try:
                         fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -212,6 +301,10 @@ class SessionGate:
                 if now - last_preempt_at >= 1.0:
                     self.request_preempt()
                     last_preempt_at = now
+                    if (PREEMPT_SECONDS and takeover_key is not None
+                            and now - started >= PREEMPT_SECONDS
+                            and not recently_preempted(takeover_key)):
+                        request_takeover(takeover_key)
                 if now - last_log_at >= 5.0:
                     position = queue.index(ticket) + 1 if ticket in queue else 1
                     print(
@@ -510,17 +603,29 @@ async def main(argv: list[str] | None = None) -> int:
                 pass
 
         alternative = None if discovery else (lambda: try_handoff(args))
-        got = await gate.acquire(stop_event, alternative=alternative)
+        key = None if discovery else stream_key(args)
+        got = await gate.acquire(stop_event, alternative=alternative, takeover_key=key)
         if not got:
             return 0
+        watcher = (asyncio.create_task(watch_takeover(key, stop_event))
+                   if PREEMPT_SECONDS and key is not None else None)
         if isinstance(got, Handoff):
-            if await run_handoff(got, stop_event) == "shutdown":
+            try:
+                outcome = await run_handoff(got, stop_event)
+            finally:
+                if watcher is not None:
+                    watcher.cancel()
+            if outcome == "shutdown":
                 return 0
             print("eufy supervisor: reused NVR session ended; starting a new one",
                   file=sys.stderr, flush=True)
             continue
         try:
-            rc, reason, state = await run_attempt(args, discovery, stop_event, gate.fileno())
+            try:
+                rc, reason, state = await run_attempt(args, discovery, stop_event, gate.fileno())
+            finally:
+                if watcher is not None:
+                    watcher.cancel()
             if reason == "parked":
                 gate.detach()          # the engine keeps the lock while parked
                 return 0

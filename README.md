@@ -133,6 +133,9 @@ Runs everything on your HA host; no always-on PC and no token paste.
      another camera preempts it immediately; set `0` to disable)
    - *(optional)* `session_reuse_seconds` — after a camera closes, keep the NVR connection open this long
      and switch the next camera inside it (about 0.2-1 s instead of 3-4 s); `0` (default) disables it
+   - *(optional)* `preempt_after_seconds` — newest camera wins: a camera that has waited this many seconds
+     for the NVR takes over from the one streaming (which then waits 10 minutes before it can take over
+     back). `0` (default) keeps first-come, first-served, which suits 24/7 recording.
    - *(optional)* `disabled_channels` — comma-separated channel numbers such as `0,2` to omit cameras
      that cannot stream from go2rtc and snapshot priming; discovery still records them. Restart after changing it.
    - *(optional)* `stream_sensors` — comma-separated `channel:sensor` pairs such as `0:0,2:0` for the startStream

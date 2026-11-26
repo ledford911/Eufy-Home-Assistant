@@ -36,6 +36,7 @@ export EUFY_STREAM_NAMES="${STATE_DIR}/stream_names.json"
 export EUFY_DISABLED_CHANNELS="$(bashio::config 'disabled_channels' '')"
 export EUFY_STREAM_SENSORS="$(bashio::config 'stream_sensors' '')"
 export EUFY_SESSION_REUSE_SECONDS="$(bashio::config 'session_reuse_seconds' '0')"
+export EUFY_PREEMPT_AFTER_SECONDS="$(bashio::config 'preempt_after_seconds' '0')"
 # Camera audio (experimental): each single-camera stream carries that camera's microphone
 # as Opus. Multi-camera groups stay silent.
 export EUFY_CONTROL_PORT="1986"

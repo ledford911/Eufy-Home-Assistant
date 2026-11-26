@@ -70,6 +70,7 @@ options:
   keep_warm: false
   adaptive_warm_seconds: 30
   session_reuse_seconds: 0
+  preempt_after_seconds: 0
   audio: false
   camera_controls: false
   token_refresh_hours: 6
@@ -100,6 +101,9 @@ schema:
   #   switch the next camera inside it (as eufy's web viewer does, ~0.2-1 s instead of a new
   #   3-4 s handshake). 0 (default) disables it; maximum 300.
   session_reuse_seconds: int(0,300)?
+  # preempt_after_seconds: a camera that waited this long takes over from the streaming one
+  #   (newest wins; 0 = first come, first served, the default; suits 24/7 recording).
+  preempt_after_seconds: int(0,120)?
   # audio: carry each camera's microphone (Opus) on single-camera streams. Experimental.
   audio: bool?
   # camera_controls: pan/tilt and zoom API on port 1986 (go2rtc login) for the live camera.
