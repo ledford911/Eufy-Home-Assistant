@@ -57,11 +57,13 @@ REUSE_SECONDS = max(0, min(int(os.environ.get("EUFY_SESSION_REUSE_SECONDS", "0")
 SESSION_SOCKET = os.environ.get("EUFY_SESSION_SOCKET", "/tmp/eufy_nvr_session.sock")
 HANDOFF_POLL = 0.5
 # Newest camera wins (off by default): a request that has waited this many seconds
-# for the NVR session asks the current camera to step aside. A camera that was just
-# stepped aside cannot take the session back for PREEMPT_COOLDOWN seconds, so two
-# viewers (or a source that keeps reconnecting) cannot ping-pong the NVR.
+# for the NVR session asks the current camera to step aside. The camera that stepped
+# aside is then blocked: its viewer's automatic reconnects are refused at once (they
+# never queue, so a TV or relay that keeps retrying cannot get the session back when
+# the newer camera stops). Every refused attempt extends the block; it lifts after
+# PREEMPT_QUIET seconds without attempts, i.e. once that viewer has really gone.
 PREEMPT_SECONDS = max(0, min(int(os.environ.get("EUFY_PREEMPT_AFTER_SECONDS", "0") or 0), 120))
-PREEMPT_COOLDOWN = 600.0
+PREEMPT_QUIET = 180.0
 PREEMPT_FRESH = 3.0
 TAKEOVER_PATH = SESSION_LOCK_PATH.with_name("eufy-takeover.json")
 PREEMPTED_PATH = SESSION_LOCK_PATH.with_name("eufy-preempted.json")
@@ -155,17 +157,30 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def recently_preempted(key: str, now: float | None = None) -> bool:
+    """True while a camera that stepped aside is still blocked."""
     at = _read_json(PREEMPTED_PATH).get(key)
     now = time.time() if now is None else now
-    return isinstance(at, (int, float)) and now - at < PREEMPT_COOLDOWN
+    return isinstance(at, (int, float)) and now - at < PREEMPT_QUIET
 
 
 def mark_preempted(key: str, now: float | None = None) -> None:
+    """Block (or keep blocking) a camera; called when it steps aside and on each refused retry."""
     now = time.time() if now is None else now
     data = {k: v for k, v in _read_json(PREEMPTED_PATH).items()
-            if isinstance(v, (int, float)) and now - v < PREEMPT_COOLDOWN}
+            if isinstance(v, (int, float)) and now - v < PREEMPT_QUIET}
     data[key] = now
     _write_json(PREEMPTED_PATH, data)
+
+
+def refuse_blocked(key: str | None) -> bool:
+    """Refuse an automatic reconnect of a camera that stepped aside; extends its block."""
+    if not PREEMPT_SECONDS or key is None or not recently_preempted(key):
+        return False
+    mark_preempted(key)
+    print(f"eufy supervisor: camera {key} was taken over by a newer request; refusing its "
+          f"reconnect (it opens again once nothing has retried it for {int(PREEMPT_QUIET)}s)",
+          file=sys.stderr, flush=True)
+    return True
 
 
 def request_takeover(key: str, now: float | None = None) -> None:
@@ -273,19 +288,12 @@ class SessionGate:
             ticket.write_text(self.label)
             last_alternative_at = 0.0
             while not stop_event.is_set():
-                queue = self._queue()
-                # A camera that was just stepped aside waits its turn instead of
-                # grabbing the parked session ahead of the newer request.
-                yield_turn = (PREEMPT_SECONDS and takeover_key is not None
-                              and queue and queue[0] != ticket
-                              and recently_preempted(takeover_key))
-                if (alternative is not None and not yield_turn
-                        and time.monotonic() - last_alternative_at >= HANDOFF_POLL):
+                if alternative is not None and time.monotonic() - last_alternative_at >= HANDOFF_POLL:
                     last_alternative_at = time.monotonic()
                     result = await alternative()
                     if result:
                         return result
-                    queue = self._queue()
+                queue = self._queue()
                 if not queue or queue[0] == ticket:
                     try:
                         fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -302,8 +310,7 @@ class SessionGate:
                     self.request_preempt()
                     last_preempt_at = now
                     if (PREEMPT_SECONDS and takeover_key is not None
-                            and now - started >= PREEMPT_SECONDS
-                            and not recently_preempted(takeover_key)):
+                            and now - started >= PREEMPT_SECONDS):
                         request_takeover(takeover_key)
                 if now - last_log_at >= 5.0:
                     position = queue.index(ticket) + 1 if ticket in queue else 1
@@ -604,6 +611,8 @@ async def main(argv: list[str] | None = None) -> int:
 
         alternative = None if discovery else (lambda: try_handoff(args))
         key = None if discovery else stream_key(args)
+        if refuse_blocked(key):
+            return 75
         got = await gate.acquire(stop_event, alternative=alternative, takeover_key=key)
         if not got:
             return 0

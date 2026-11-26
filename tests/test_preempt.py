@@ -3,6 +3,7 @@ import asyncio
 import importlib.util
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -41,12 +42,12 @@ def test_takeover_requests_expire_and_ignore_our_own_camera(monkeypatch, tmp_pat
     assert run.takeover_request("1", now=1000.0 + run.PREEMPT_FRESH + 1) is None
 
 
-def test_a_stepped_aside_camera_cools_down(monkeypatch, tmp_path):
+def test_a_stepped_aside_camera_stays_blocked_until_quiet(monkeypatch, tmp_path):
     run = load_run(monkeypatch, tmp_path)
     run.mark_preempted("1", now=1000.0)
     assert run.recently_preempted("1", now=1000.0 + 60)
     assert not run.recently_preempted("2", now=1000.0 + 60)
-    assert not run.recently_preempted("1", now=1000.0 + run.PREEMPT_COOLDOWN + 1)
+    assert not run.recently_preempted("1", now=1000.0 + run.PREEMPT_QUIET + 1)
 
 
 def test_holder_steps_aside_for_a_newer_camera(monkeypatch, tmp_path):
@@ -83,56 +84,33 @@ def test_waiter_asks_for_takeover_only_after_waiting(monkeypatch, tmp_path):
     asyncio.run(scenario())
 
 
-def test_a_cooled_down_camera_never_asks_and_off_by_default(monkeypatch, tmp_path):
-    run = load_run(monkeypatch, tmp_path, preempt="1")
-    run.mark_preempted("2")
-
-    async def scenario(mod, key):
-        holder = mod.SessionGate(path=tmp_path / "s.lock", preempt_path=tmp_path / "s.preempt")
-        assert await holder.acquire(asyncio.Event()) is True
-        waiter = mod.SessionGate(path=tmp_path / "s.lock", preempt_path=tmp_path / "s.preempt")
-        stop = asyncio.Event()
-        task = asyncio.create_task(waiter.acquire(stop, takeover_key=key))
-        await asyncio.sleep(1.6)
-        stop.set()
-        assert await task is False
-        holder.release()
-    asyncio.run(scenario(run, "2"))
-    assert run.takeover_request("1") is None
-
-    off = load_run(monkeypatch, tmp_path, preempt="0")
-    assert off.PREEMPT_SECONDS == 0
-    asyncio.run(scenario(off, "3"))
-    assert off.takeover_request("1") is None
+def test_blocked_camera_reconnects_are_refused_and_extend_the_block(monkeypatch, tmp_path):
+    run = load_run(monkeypatch, tmp_path)
+    t0 = time.time()
+    run.mark_preempted("1", now=t0 - run.PREEMPT_QUIET + 5)      # block nearly over
+    assert run.refuse_blocked("1") is True                        # a retry arrives...
+    assert run.recently_preempted("1", now=t0 + run.PREEMPT_QUIET - 5)   # ...and restarts the block
+    assert run.refuse_blocked("2") is False                       # other cameras are unaffected
+    assert run.refuse_blocked(None) is False
 
 
-def test_stepped_aside_camera_does_not_jump_the_queue_for_the_parked_session(monkeypatch, tmp_path):
-    run = load_run(monkeypatch, tmp_path, preempt="5")
+def test_blocked_camera_never_queues_even_after_the_other_stops(monkeypatch, tmp_path):
+    run = load_run(monkeypatch, tmp_path)
     run.mark_preempted("1")
-    calls = []
+    started = time.monotonic()
+    rc = asyncio.run(run.main(["1", "--rtsp", "rtsp://127.0.0.1:1/x"]))
+    assert rc == 75 and time.monotonic() - started < 2          # refused at once, no waiting
+    queue = tmp_path / "s.lock.queue"
+    assert not queue.exists() or not list(queue.iterdir())
 
-    async def handoff():
-        calls.append(1)
-        return None
 
-    async def scenario():
-        holder = run.SessionGate(path=tmp_path / "s.lock", preempt_path=tmp_path / "s.preempt")
-        assert await holder.acquire(asyncio.Event()) is True
-        newer = run.SessionGate(path=tmp_path / "s.lock", preempt_path=tmp_path / "s.preempt")
-        stop_newer = asyncio.Event()
-        t_newer = asyncio.create_task(newer.acquire(stop_newer, takeover_key="2"))
-        await asyncio.sleep(0.2)
-        bumped = run.SessionGate(path=tmp_path / "s.lock", preempt_path=tmp_path / "s.preempt")
-        stop_bumped = asyncio.Event()
-        t_bumped = asyncio.create_task(bumped.acquire(stop_bumped, alternative=handoff, takeover_key="1"))
-        await asyncio.sleep(1.2)
-        assert calls == []                  # it waits behind the newer request
-        for e in (stop_newer, stop_bumped):
-            e.set()
-        await t_newer
-        await t_bumped
-        holder.release()
-    asyncio.run(scenario())
+def test_block_lifts_after_quiet_and_is_off_by_default(monkeypatch, tmp_path):
+    run = load_run(monkeypatch, tmp_path)
+    run.mark_preempted("1", now=time.time() - run.PREEMPT_QUIET - 1)
+    assert run.refuse_blocked("1") is False                      # viewer really left; opens normally
+    off = load_run(monkeypatch, tmp_path, preempt="0")
+    off.mark_preempted("2")
+    assert off.refuse_blocked("2") is False
 
 
 def test_addon_option_and_wiring():
@@ -144,3 +122,4 @@ def test_addon_option_and_wiring():
     supervisor = (ROOT / "bridge/eufy_run.py").read_text()
     assert "watch_takeover(key, stop_event)" in supervisor
     assert "takeover_key=key" in supervisor
+    assert "if refuse_blocked(key):" in supervisor
